@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LibLens - Library Visualization</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h1>LibLens</h1>
+      <span class="version">v1.0 &mdash; Library Visualizer</span>
+    </div>
+
+    <button id="btn-scan" class="btn-primary">Scan Libraries</button>
+
+    <div class="section">
+      <div class="section-title">Progress</div>
+      <div class="progress-bg hidden" id="progress-bg">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <div class="progress-text hidden" id="progress-text"></div>
+    </div>
+
+    <div class="section" id="stats-section" style="display:none;">
+      <div class="section-title">Library Stats</div>
+      <div class="stats-content" id="stats-content"></div>
+    </div>
+
+    <div class="section hidden" id="system-info-section">
+      <div class="section-title">System Info</div>
+      <div class="stats-content" id="system-info-content"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Legend</div>
+      <div class="legend-list">
+        <label class="filter-item"><input type="checkbox" checked data-cat="nodejs"> <span class="legend-dot" style="--color:#E3DDAA"></span> Node.js</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="python"> <span class="legend-dot" style="--color:#56B4BD"></span> Python</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="ruby"> <span class="legend-dot" style="--color:#CC6699"></span> Ruby Gems</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="system"> <span class="legend-dot" style="--color:#C9CBFF"></span> System</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="brew"> <span class="legend-dot" style="--color:#FFD6A1"></span> Homebrew</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="composer"> <span class="legend-dot" style="--color:#F78497"></span> Composer</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="other"> <span class="legend-dot" style="--color:#E5C38C"></span> Other</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Search</div>
+      <input type="text" class="search-box" id="search-input" placeholder="Filter libraries...">
+    </div>
+
+    <button id="btn-recenter" class="btn-secondary">Re-center View</button>
+  </div>
+
+  <!-- Canvas -->
+  <div class="canvas-container" id="canvas-container">
+    <svg id="graph-svg"></svg>
+
+    <div class="tooltip hidden" id="tooltip"></div>
+    <div class="context-menu hidden" id="context-menu"></div>
+
+    <div class="detail-panel hidden" id="detail-panel">
+      <button id="close-detail" class="btn-close">&times;</button>
+      <h3 class="detail-name" id="detail-name"></h3>
+      <p class="detail-field" id="detail-version"></p>
+      <p class="detail-field" id="detail-path"></p>
+      <p class="detail-field" id="detail-category"></p>
+      <div id="detail-deps-text"></div>
+      <div class="detail-actions">
+        <button id="btn-install" class="btn-action btn-install">Install</button>
+        <button id="btn-uninstall" class="btn-action btn-uninstall">Uninstall</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn-toolbar" id="zoom-in" title="Zoom in">+</button>
+      <button class="btn-toolbar" id="zoom-out" title="Zoom out">&minus;</button>
+    </div>
+
+    <div class="zoom-info" id="zoom-info">100%</div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

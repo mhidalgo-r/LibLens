@@ -1,0 +1,1316 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+public/
+  app.js
+  index.html
+  styles.css
+package.json
+README.md
+server.js
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="public/app.js">
+(function() {
+  let simulation = null;
+  let nodesData = [];
+  let linksData = [];
+  let nodeVisibility = {};
+  let selectedNode = null;
+  let searchQuery = '';
+  const catNameMap = {
+    'nodejs': 'Node.js',
+    'python': 'Python',
+    'ruby': 'Ruby Gems',
+    'system': 'System',
+    'brew': 'Homebrew',
+    'composer': 'Composer',
+    'other': 'Other'
+  };
+
+  const catColors = {
+    'nodejs': { fill: '#E3DDAA', stroke: '#B8AE70', labelFill: '#1a1b26' },
+    'python': { fill: '#56B4BD', stroke: '#38909A', labelFill: '#fff' },
+    'ruby':   { fill: '#CC6699', stroke: '#A04E76', labelFill: '#fff' },
+    'system': { fill: '#C9CBFF', stroke: '#9B9CDD', labelFill: '#1a1b26' },
+    'brew':   { fill: '#FFD6A1', stroke: '#CC9E6A', labelFill: '#1a1b26' },
+    'composer': { fill: '#F78497', stroke: '#C45A6A', labelFill: '#fff' },
+    'other':  { fill: '#E5C38C', stroke: '#AA9855', labelFill: '#1a1b26'}
+  };
+
+  // DOM refs
+  const svgEl = d3.select('#graph-svg');
+  const graphGroup = svgEl.append('g').attr('class', 'graph-group');
+  const canvasContainer = document.getElementById('canvas-container');
+
+  // Zoom
+  const zoomBehavior = d3.zoom()
+    .scaleExtent([0.1, 5])
+    .on('zoom', (event) => {
+      graphGroup.attr('transform', event.transform);
+      document.getElementById('zoom-info').textContent = Math.round(event.transform.k * 100) + '%';
+    });
+
+  svgEl.call(zoomBehavior);
+
+  // Elements
+  const btnScan = document.getElementById('btn-scan');
+  const btnRecenter = document.getElementById('btn-recenter');
+  const zoomInBtn = document.getElementById('zoom-in');
+  const zoomOutBtn = document.getElementById('zoom-out');
+  const progressBg = document.getElementById('progress-bg');
+  const progressFill = document.getElementById('progress-fill');
+  const progressTextEl = document.getElementById('progress-text');
+  const statsSection = document.getElementById('stats-section');
+  const statsContent = document.getElementById('stats-content');
+  const systemInfoSection = document.getElementById('system-info-section');
+  const systemInfoContent = document.getElementById('system-info-content');
+  const searchInput = document.getElementById('search-input');
+  const tooltipEl = document.getElementById('tooltip');
+  const contextMenuEl = document.getElementById('context-menu');
+  const detailPanel = document.getElementById('detail-panel');
+
+  // Helpers
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Tooltip
+  function showTooltip(event, d) {
+    let html = '<div class="tt-name">' + escapeHtml(d.name) + '</div>';
+    if (d.version) html += '<span class="tt-version">' + escapeHtml(d.version) + '</span>';
+    if (d.path) html += '<div class="tt-path">' + escapeHtml(d.path) + '</div>';
+    tooltipEl.innerHTML = html;
+    tooltipEl.classList.remove('hidden');
+    
+    const w = canvasContainer.getBoundingClientRect().width;
+    const h = canvasContainer.getBoundingClientRect().height;
+    let left = event.clientX - canvasContainer.getBoundingClientRect().left + 12;
+    let top = event.clientY - canvasContainer.getBoundingClientRect().top + 12;
+    if (left + 270 > w) left -= 282;
+    if (top + 120 > h) top -= 130;
+    tooltipEl.style.left = left + 'px';
+    tooltipEl.style.top = top + 'px';
+  }
+
+  function hideTooltip() {
+    tooltipEl.classList.add('hidden');
+  }
+
+  // Context menu
+  function showContextMenu(event, d) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    let html = '';
+    if (d.category !== 'system' && d.category !== 'brew') {
+      html += '<div class="ctx-item" data-action="install">Install ' + escapeHtml(d.name) + '</div>';
+      html += '<div class="ctx-item" data-action="uninstall">Uninstall ' + escapeHtml(d.name) + '</div>';
+    }
+    if (d.path) {
+      html += '<div class="ctx-item" data-action="copy-path">&#x1F4CB Copy Path</div>';
+    }
+    html += '<div style="height:1px;background:#292e42;margin:3px 8px;"></div>';
+    html += '<div class="ctx-item" data-action="focus">Focus Node</div>';
+    html += '<div class="ctx-item" data-action="toggle">' + (d.disabled ? 'Show' : 'Hide') + '</div>';
+    
+    contextMenuEl.innerHTML = html;
+    
+    const w = canvasContainer.getBoundingClientRect().width;
+    const h = canvasContainer.getBoundingClientRect().height;
+    let left = event.clientX - canvasContainer.getBoundingClientRect().left;
+    let top = event.clientY - canvasContainer.getBoundingClientRect().top;
+    if (left + 200 > w) left -= 210;
+    if (top + 200 > h) top -= 210;
+    
+    contextMenuEl.style.left = left + 'px';
+    contextMenuEl.style.top = top + 'px';
+    contextMenuEl.classList.remove('hidden');
+  }
+
+  function hideContextMenu() {
+    contextMenuEl.classList.add('hidden');
+  }
+
+  // Detail panel
+  function showDetailPanel(d) {
+    selectedNode = d;
+    document.getElementById('detail-name').textContent = d.name;
+    document.getElementById('detail-version').innerHTML = '<strong>Version</strong>' + (d.version ? escapeHtml(d.version) : ' Unknown');
+    
+    if (d.path) {
+      document.getElementById('detail-path').innerHTML = '<strong>Path</strong><div class="detail-path">' + escapeHtml(d.path) + '</div>';
+    } else {
+      document.getElementById('detail-path').innerHTML = '<strong>Path</strong>N/A';
+    }
+    
+    const catLabel = catNameMap[d.category] || d.category;
+    document.getElementById('detail-category').innerHTML = '<strong>Category</strong>' + escapeHtml(catLabel);
+
+    let depsHtml = '';
+    if (d.dependencies && d.dependencies.length > 0) {
+      depsHtml = '<div class="detail-field"><strong>Dependencies</strong><div class="dep-list">';
+      for (const dep of d.dependencies) {
+        depsHtml += '<span class="dep-badge">' + escapeHtml(dep) + '</span>';
+      }
+      depsHtml += '</div></div>';
+    } else if (d.dependents && d.dependents.length > 0) {
+      depsHtml = '<div class="detail-field"><strong>Dependents</strong><div class="dep-list">';
+      for (const dep of d.dependents) {
+        depsHtml += '<span class="dep-badge">' + escapeHtml(dep) + '</span>';
+      }
+      depsHtml += '</div></div>';
+    }
+    document.getElementById('detail-deps-text').innerHTML = depsHtml;
+
+    const colors = catColors[d.category] || catColors['other'];
+    document.getElementById('btn-install').style.background = 'linear-gradient(135deg, #3d4aee, #7aa2f7)';
+    document.getElementById('btn-uninstall').style.background = 'linear-gradient(135deg, #db6e8b, #f7768e)';
+    
+    detailPanel.classList.remove('hidden');
+  }
+
+  function hideDetailPanel() {
+    selectedNode = null;
+    detailPanel.classList.add('hidden');
+  }
+
+  // Stats
+  function renderStats(summary) {
+    if (!summary || Object.keys(summary).length === 0) return;
+    
+    let html = '<div style="font-size:11px;color:#545c7e;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #292e42;">Total: ' + Object.values(summary).reduce((a,b)=>a+b,0) + ' libraries</div>';
+    
+    for (const [cat, count] of Object.entries(summary)) {
+      if (count <= 0) continue;
+      const icon = {'nodejs':'\u26AB','python':'\uD83D\uDC0D','ruby':'\uD83C\uDF39','system':'\u2699\uFE0F','brew':'\uD83E\uDD53','composer':'\uD83C\uDF1F','other':'\u26A1'}[cat] || '\u25CB';
+      const label = catNameMap[cat] || cat;
+      html += '<div style="display:flex;align-items:center;gap:6px;"><span>' + icon + '</span><span class="stat-cat">' + escapeHtml(label) + '</span><span style="margin-left:auto;font-weight:600;">' + count + '</span></div>';
+    }
+    
+    statsContent.innerHTML = html;
+    statsSection.style.display = 'block';
+  }
+
+  function renderSystemInfo(sys) {
+    if (!sys) return;
+    let html = '';
+    const fields = [
+      ['OS', sys.platform + ' ' + (sys.arch || '')],
+      ['Type', sys.type || ''],
+      ['Release', sys.release || ''],
+      ['Hostname', sys.hostname || ''],
+      ['CPU Cores', sys.cpusCount || sys.cpus?.length || '?'],
+      ['Memory', sys.memory || '']
+    ];
+    
+    for (const [label, value] of fields) {
+      if (value && String(value).trim()) {
+        html += '<div style="margin-bottom:2px;"><strong>' + escapeHtml(label) + '</strong> ' + escapeHtml(String(value)) + '</div>';
+      }
+    }
+    
+    systemInfoContent.innerHTML = html;
+    systemInfoSection.classList.remove('hidden');
+  }
+
+  // Main graph rendering
+  function renderGraph(graphData, summary, sysInfo) {
+    graphGroup.selectAll('*').remove();
+    
+    if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
+    
+    nodesData = graphData.nodes.map(n => ({ ...n, disabled: false }));
+    
+    // Initialize visibility from checkboxes
+    const visibleCats = new Set();
+    document.querySelectorAll('.filter-item input[type="checkbox"]').forEach(cb => {
+      if (cb.checked) visibleCats.add(cb.dataset.cat);
+    });
+    
+    nodesData.forEach(n => {
+      n.disabled = !visibleCats.has(n.category);
+    });
+
+    // Create links
+    linksData = (graphData.edges || []).map(e => ({
+      source: typeof e.source === 'object' ? e.source.id : e.source,
+      target: typeof e.target === 'object' ? e.target.id : e.target
+    }));
+
+    // Apply search filter
+    const filteredNodes = nodesData.filter(n => {
+      if (n.disabled) return false;
+      if (searchQuery && !n.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      return true;
+    });
+
+    const visibleLinks = linksData.filter(e => {
+      const sId = typeof e.source === 'string' ? e.source : e.source.id;
+      const tId = typeof e.target === 'string' ? e.target : e.target.id;
+      const sVisible = filteredNodes.find(n => n.id === sId);
+      const tVisible = filteredNodes.find(n => n.id === tId);
+      return sVisible && tVisible;
+    });
+
+    // Destroy old simulation
+    if (simulation) simulation.stop();
+
+    // Create new nodes array for simulation with positions
+    const simNodes = filteredNodes.map(n => {
+      if (!n.x) n.x = (Math.random() - 0.5) * 400;
+      if (!n.y) n.y = (Math.random() - 0.5) * 400;
+      return n;
+    });
+
+    // Create simulation
+    simulation = d3.forceSimulation(simNodes)
+      .force('link', d3.forceLink(visibleLinks).id(d => d.id).distance(120))
+      .force('charge', d3.forceManyBody().strength(-350))
+      .force('center', d3.forceCenter(0, 0))
+      .force('collision', d3.forceCollide().radius(d => (d.radius || 32) + 15))
+      .stop();
+
+    // Manual tick loop for better control
+    for (let i = 0; i < 300; ++i) simulation.tick();
+
+    // Add links
+    const linkLine = graphGroup.append('g').selectAll('.link-line')
+      .data(visibleLinks, d => (typeof d.source === 'string' ? d.source : d.source.id) + '-' + (typeof d.target === 'string' ? d.target : d.target.id))
+      .enter().append('line')
+      .attr('class', 'link-line')
+      .attr('stroke', '#414868')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-opacity', 0.5);
+
+    // Add nodes
+    const nodeGroups = graphGroup.append('g').selectAll('.node-group')
+      .data(simNodes, d => d.id)
+      .enter().append('g')
+      .attr('class', 'node-group')
+      .call(d3.drag()
+        .on('start', (event, d) => {
+          simulation.alpha(0.3).restart();
+          d.fx = d.x;
+          d.fy = d.y;
+          canvasContainer.classList.add('dragging-node');
+        })
+        .on('drag', (event, d) => {
+          d.fx = event.x;
+          d.fy = event.y;
+        })
+        .on('end', () => {
+          simulation.alpha(0.1).restart();
+          canvasContainer.classList.remove('dragging-node');
+        }))
+      .on('mouseover', function(event, d) { 
+        showTooltip(event, d);
+        highlightConnected(d);
+      })
+      .on('mousemove', function(event, d) { 
+        showTooltip(event, d);
+      })
+      .on('mouseout', function() { 
+        hideTooltip();
+        unhighlightAll();
+      })
+      .on('contextmenu', function(event, d) { 
+        showContextMenu(event, d);
+      })
+      .on('dblclick', () => { showDetailPanel(d); });
+
+    // Node rectangles
+    nodeGroups.append('rect')
+      .attr('class', 'node-rect')
+      .attr('x', d => -(d.radius || 32)/2)
+      .attr('y', d => -(d.radius || 32)/2)
+      .attr('width', d => (d.radius || 32))
+      .attr('height', d => (d.radius || 32))
+      .attr('rx', 6).attr('ry', 6)
+      .attr('fill', d => catColors[d.category]?.fill || catColors['other'].fill)
+      .attr('stroke', d => catColors[d.category]?.stroke || catColors['other'].stroke)
+      .attr('stroke-width', 2);
+
+    // Node shadows
+    nodeGroups.append('rect')
+      .attr('x', d => -(d.radius || 32)/2)
+      .attr('y', d => -(d.radius || 32)/2)
+      .attr('width', d => (d.radius || 32))
+      .attr('height', d => (d.radius || 32))
+      .attr('rx', 6).attr('ry', 6)
+      .attr('fill', 'transparent')
+      .attr('stroke-width', 0);
+
+    // Labels
+    nodeGroups.append('text')
+      .attr('class', 'node-label')
+      .attr('x', 0)
+      .attr('y', 4)
+      .attr('fill', d => catColors[d.category]?.labelFill || '#fff')
+      .attr('font-size', d => Math.max(8, (d.radius || 32)/5) + 'px')
+      .attr('font-weight', 600)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .attr('pointer-events', 'none')
+      .attr('dy', '0.35em')
+      .text(d => {
+        const w = (d.radius || 32);
+        const maxChars = Math.max(3, Math.floor(w / 8));
+        return d.name.length > maxChar ? d.name.substring(0, maxChar - 1) + '...' : d.name;
+    });
+
+    // Update positions
+    nodeGroups.attr('transform', d => `translate(${d.x},${d.y})`);
+    linkLine
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y);
+
+    renderStats(summary);
+    renderSystemInfo(sysInfo);
+
+    // Zoom to fit after render
+    setTimeout(() => {
+      const bounds = graphGroup.node().getBBox();
+      if (bounds.width > 0 && bounds.height > 0) {
+        const w = canvasContainer.clientWidth;
+        const h = canvasContainer.clientHeight;
+        const scale = Math.min(w / bounds.width, h / bounds.height) * 0.85;
+        const tx = w/2 - (bounds.x + bounds.width/2) * scale;
+        const ty = h/2 - (bounds.y + bounds.height/2) * scale;
+        svgEl.transition().duration(750).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx,ty).scale(Math.min(scale, 0.8)));
+      }
+    }, 400);
+
+    // Update progress to complete
+    setTimeout(() => {
+      progressFill.style.width = '100%';
+      if (progressTextEl) {
+        progressTextEl.textContent = 'Scan complete!';
+        setTimeout(() => {
+          if (progressBg) progressBg.classList.add('hidden');
+          if (progressTextEl) progressTextEl.classList.add('hidden');
+        }, 1500);
+      }
+    }, 200);
+
+    // Update button state
+    btnScan.disabled = false;
+    btnScan.textContent = 'Scan Libraries';
+  }
+
+  // Highlight connected nodes
+  function highlightConnected(d) {
+    const connectedIds = new Set();
+    connectedIds.add(d.id);
+    
+    linksData.forEach(e => {
+      const sId = typeof e.source === 'object' ? e.source.id : e.source;
+      const tId = typeof e.target === 'object' ? e.target.id : e.target;
+      if (sId === d.id) connectedIds.add(tId);
+      if (tId === d.id) connectedIds.add(sId);
+    });
+
+    graphGroup.selectAll('.node-group').attr('opacity', g => connectedIds.has(g.id) ? 1 : 0.2);
+    graphGroup.selectAll('.link-line').attr('stroke-width', g => {
+      const sId = typeof g.source === 'object' ? g.source.id : g.source;
+      const tId = typeof g.target === 'object' ? g.target.id : g.target;
+      return (sId === d.id || tId === d.id) ? 2.5 : 1;
+    }).attr('stroke', g => {
+      const sId = typeof g.source === 'object' ? g.source.id : g.source;
+      const tId = typeof g.target === 'object' ? g.target.id : g.target;
+      return (sId === d.id || tId === d.id) ? '#709FE6' : '#414868';
+    }).attr('stroke-opacity', g => {
+      const sId = typeof g.source === 'object' ? g.source.id : g.source;
+      const tId = typeof g.target === 'object' ? g.target.id : g.target;
+      return (sId === d.id || tId === d.id) ? 0.8 : 0.3;
+    });
+  }
+
+  function unhighlightAll() {
+    graphGroup.selectAll('.node-group').attr('opacity', 1);
+    graphGroup.selectAll('.link-line').attr('stroke-width', 1.5).attr('stroke', '#414868');
+  }
+
+  // Re-center view
+  function recenterView() {
+    const w = canvasContainer.clientWidth;
+    const h = canvasContainer.clientHeight;
+    svgEl.transition().duration(750).call(zoomBehavior.transform, d3.zoomIdentity.translate(w/2,h/2).scale(1));
+  }
+
+  // Start scan
+  async function startScan () {
+    btnScan.disabled: true;
+    btnScan.textContent = 'Scanning...';
+    
+    if (progressBg) progressBg.classList.remove('hidden');
+    if (progressTextEl) {
+      progressTextEl.classList.remove('hidden');
+      progressTextEl.textContent = 'Detecting operating system...';
+    }
+    if (progressFill) progressFill.style.width = '10%';
+
+    // Simulate progress
+    const stages = [15,30,45,60,75];
+    let sIdx = 0;
+    const stageInterval = setInterval(() => {
+      if (sIdx < stages.length) {
+        progressFill.style.width = stages[sIdx] + '%';
+        sIdx++;
+      } else clearInterval(stageInterval);
+    }, 300);
+
+    try {
+      const response = await fetch('/api/discover');
+      const data = await response.json();
+      
+      clearInterval(stageInterval);
+      renderGraph(data.graph, data.summary, data.systemInfo);
+    } catch(err) {
+      console.error('Scan failed:', err);
+      progressTextEl.textContent = 'Error: ' + message;
+
+      if (progressBg) progressBg.classList.add('hidden');
+      if (progressTextEl) progressTextEl.classList.add('hidden');
+      
+      btnScan.disabled = false;
+      btnScan.textContent = 'Scan Libraries';
+    }
+  };
+
+  // Event listeners
+  btnScan.addEventListener('click', startScan);
+  btnRecenter.addEventListener('click', recenterView);
+  
+  zoomInBtn.addEventListener('click', () => { svgEl.transition().duration(200).call(zoomBehavior.scaleBy, 1.3) });
+  zoomOutBtn.addEventListener('click', () => { svgEl.transition().duration(200).call(zoomBehavior.scaleBy, 0.7) });
+
+  // Close detail panel
+  document.getElementById('close-detail').addEventListener('click', hideDetailPanel);
+  
+  document.getElementById('btn-install').addEventListener('click', async function() {
+    if (!selectedNode) return;
+    
+    const name = selectedNode.name;
+    try {
+      const res = await fetch('/api/install/' + encodeURIComponent(name));
+      const data = await res.json();
+      
+      let msg = "Install command:\n";
+      msg += data.command || '(install not available for ' + (os.platform || 'unknown'));
+    
+      alert(msg);
+    };
+  });
+
+  document.getElementById('btn-uninstall').addEventListener('click', async function() {
+    if (!selectedNode) return;
+    
+    const name = selectedNode.name;
+    try {
+      const res = await fetch('/api/uninstall/' + encodeURIComponent(name));
+      const data = await res.json();
+
+      let msg = "Uninstall command:\n";
+      msg += data.command || '(uninstall not available for platform)';
+      
+      alert(msg);
+    } catch(err) {
+      console.error('Uninstall error:', err);
+      alert('Failed to get uninstall command');
+    }
+  });
+
+  // Context menu clicks
+  contextMenuEl.addEventListener('click', async function(event) {
+    const actionEl = event.target.closest('.ctx-item');
+    if (!actionEl) return;
+    
+    const action = actionEl.dataset.action;
+    hideContextMenu();
+    
+    let d = selectedNode || nodesData.find(n => n.name === actionEl.textContent.trim());
+    if (!d) return;
+
+    if (action === 'install') {
+      try {
+        const res = await fetch('/api/install/' + encodeURIComponent(d.name));
+        const data = await res.json();
+        alert('Install: ' + (data.command || '(N/A)'));
+      } catch(e) {}
+    } else if (action === 'uninstall') {
+      try {
+        const res = await fetch('/api/uninstall/' + encodeURIComponent(d.name));
+        const data = await res.json();
+        alert('Uninstall: ' + (data.command || '(N/A)'));
+      } catch(e) {}
+    } else if (action === 'copy-path' && d.path) {
+      navigator.clipboard?.writeText(d.path);
+    } else if (action === 'focus') {
+      if (d.x !== undefined && d.y !== 'undefined') {
+        const width = canvasContainer.clientWidth;
+        const height = canvasContainer.clientHeight;
+        svgEl.transition().duration(500).call(zoomBehavior.transform, d3.zoomIdentity.translate(width/2 - d.x, height/2-d.y).scale(currentZoom?.k || 1));
+      }
+    } else if (action === 'toggle') {
+      d.disabled = !d.disabled;
+      renderGraph({ nodes: nodesData, edges: linksData }, {}, {});
+    }
+  });
+
+  // Close menus on click outside
+  canvasContainer.addEventListener('click', function(event) {
+    if (!contextMenuEl.contains(event.target)) hideContextMenu();
+  });
+
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+      hideContextMenu();
+      hideDetailPanel();
+      hideTooltip();
+    }
+    // Search box focus handler
+  });
+
+  searchInput.addEventListener('input', function() {
+    searchQuery = event.target.value.trim().toLowerCase();
+    renderGraph({ nodes: nodesData, edges: linksData }, {}, {});
+  });
+
+  // Filter checkboxes
+  document.querySelectorAll('.filter-item input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', function() {
+      nodeVisibility[this.data-cat] = this.checked;
+      const visibleCats = new Set();
+      document.querySelectorAll('.filter-item input[type="checked"]:checked').forEach(cbx => {
+        visibleCats.add(cbx.dataset.cat);
+      });
+
+      nodesData.forEach(n => n.disabled = !visibleCats.has(n.category));
+      renderGraph({ nodes: nodesData, edges: linksData }, {});
+    });
+  });
+
+  // Update system info immediately
+  fetch('/api/info').then(res => res.json()).then(data => {
+    renderSystemInfo(data);
+    systemInfoSection.classList.remove('hidden');
+  }).catch(() => {});
+
+})();
+</file>
+
+<file path="public/index.html">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LibLens - Library Visualization</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h1>LibLens</h1>
+      <span class="version">v1.0 &mdash; Library Visualizer</span>
+    </div>
+
+    <button id="btn-scan" class="btn-primary">Scan Libraries</button>
+
+    <div class="section">
+      <div class="section-title">Progress</div>
+      <div class="progress-bg hidden" id="progress-bg">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <div class="progress-text hidden" id="progress-text"></div>
+    </div>
+
+    <div class="section" id="stats-section" style="display:none;">
+      <div class="section-title">Library Stats</div>
+      <div class="stats-content" id="stats-content"></div>
+    </div>
+
+    <div class="section hidden" id="system-info-section">
+      <div class="section-title">System Info</div>
+      <div class="stats-content" id="system-info-content"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Legend</div>
+      <div class="legend-list">
+        <label class="filter-item"><input type="checkbox" checked data-cat="nodejs"> <span class="legend-dot" style="--color:#E3DDAA"></span> Node.js</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="python"> <span class="legend-dot" style="--color:#56B4BD"></span> Python</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="ruby"> <span class="legend-dot" style="--color:#CC6699"></span> Ruby Gems</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="system"> <span class="legend-dot" style="--color:#C9CBFF"></span> System</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="brew"> <span class="legend-dot" style="--color:#FFD6A1"></span> Homebrew</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="composer"> <span class="legend-dot" style="--color:#F78497"></span> Composer</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="other"> <span class="legend-dot" style="--color:#E5C38C"></span> Other</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Search</div>
+      <input type="text" class="search-box" id="search-input" placeholder="Filter libraries...">
+    </div>
+
+    <button id="btn-recenter" class="btn-secondary">Re-center View</button>
+  </div>
+
+  <!-- Canvas -->
+  <div class="canvas-container" id="canvas-container">
+    <svg id="graph-svg"></svg>
+
+    <div class="tooltip hidden" id="tooltip"></div>
+    <div class="context-menu hidden" id="context-menu"></div>
+
+    <div class="detail-panel hidden" id="detail-panel">
+      <button id="close-detail" class="btn-close">&times;</button>
+      <h3 class="detail-name" id="detail-name"></h3>
+      <p class="detail-field" id="detail-version"></p>
+      <p class="detail-field" id="detail-path"></p>
+      <p class="detail-field" id="detail-category"></p>
+      <div id="detail-deps-text"></div>
+      <div class="detail-actions">
+        <button id="btn-install" class="btn-action btn-install">Install</button>
+        <button id="btn-uninstall" class="btn-action btn-uninstall">Uninstall</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn-toolbar" id="zoom-in" title="Zoom in">+</button>
+      <button class="btn-toolbar" id="zoom-out" title="Zoom out">&minus;</button>
+    </div>
+
+    <div class="zoom-info" id="zoom-info">100%</div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+</file>
+
+<file path="public/styles.css">
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; background: #1a1b26; color: #c0caf5; }
+
+.sidebar { width: 280px; min-width: 280px; background: #1f2335; padding: 20px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; border-right: 1px solid #292e42; }
+.sidebar-header { text-align: center; padding-bottom: 12px; border-bottom: 1px solid #292e42; margin-bottom: 4px; }
+.sidebar-header h1 { font-size: 22px; color: #7aa2f7; letter-spacing: -0.5px; }
+.version { font-size: 11px; color: #545c7e; display: block; margin-top: 4px; }
+
+.btn-primary { padding: 11px 16px; background: linear-gradient(135deg, #3d4aee, #7aa2f7); border: none; border-radius: 8px; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(61,74,238,0.35); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-secondary { padding: 8px 16px; background: #292e42; border: none; border-radius: 6px; color: #c0caf5; font-size: 13px; cursor: pointer; transition: background 0.15s; }
+.btn-secondary:hover { background: #414868; }
+
+.section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: #545c7e; margin-bottom: 6px; font-weight: 700; }
+.stats-content { font-size: 12px; line-height: 2; color: #a9b1d6; background: #1f2335; padding: 10px; border-radius: 6px; overflow-x: auto; word-wrap: break-word; }
+
+.progress-bg { height: 4px; background: #292e42; border-radius: 2px; overflow: hidden; margin-bottom: 4px; }
+.progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #7aa2f7, #bb9af7); border-radius: 2px; transition: width 0.3s; }
+.progress-text { font-size: 11px; color: #545c7e; min-height: 14px; }
+
+.legend-list, .filter-list { display: flex; flex-direction: column; gap: 3px; }
+.filter-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #9aa5c1; cursor: pointer; padding: 2px 4px; border-radius: 4px; transition: background 0.1s; user-select: none; }
+.filter-item:hover { background: #292e42; }
+.filter-item input[type="checkbox"] { accent-color: #7aa2f7; margin: 0; width: 13px; height: 13px; cursor: pointer; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; background: var(--color); box-shadow: inset 0 -1px 3px rgba(0,0,0,0.25); }
+
+.search-box { width: 100%; padding: 8px 12px; background: #1f2335; border: 1px solid #292e42; border-radius: 6px; color: #c0caf5; font-size: 12px; outline: none; transition: border-color 0.15s; }
+.search-box:focus { border-color: #7aa2f7; }
+.search-box::placeholder { color: #3d59a1; }
+
+.hidden { display: none !important; }
+
+.canvas-container { flex: 1; position: relative; overflow: hidden; background: #1a1b26; cursor: grab; user-select: none; }
+.canvas-container.grabbing { cursor: grabbing; }
+.canvas-container.dragging-node { cursor: move; }
+
+.graph-svg { width: 100%; height: 100%; display: block; pointer-events: all; }
+
+.toolbar { position: absolute; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 4px; z-index: 10; background: #1f2335; padding: 4px; border-radius: 8px; border: 1px solid #292e42; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+.btn-toolbar { width: 30px; height: 28px; background: transparent; border: none; font-size: 15px; color: #9aa5c1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.1s; border-radius: 4px; }
+.btn-toolbar:hover { background: #292e42; color: #7aa2f7; }
+
+.zoom-info { position: absolute; bottom: 58px; right: 16px; font-size: 10px; color: #3d59a1; z-index: 10; font-family: monospace; }
+
+.tooltip { position: fixed; background: #24283b; border: 1px solid #3d59a1; box-shadow: 0 8px 24px rgba(0,0,0,0.35); padding: 10px 13px; border-radius: 8px; pointer-events: none; z-index: 100; max-width: 260px; transition: opacity 0.1s; }
+.tooltip.hidden { display: none !important; }
+.tt-name { font-weight: 700; color: #7aa2f7; font-size: 13px; margin-bottom: 3px; word-break: break-word; }
+.tt-version { display: inline-block; background: #292e42; padding: 1px 8px; border-radius: 4px; font-size: 10px; color: #a9b1d6; margin-bottom: 3px; }
+.tt-path { font-size: 11px; background: #1f2335; padding: 4px 7px; border-radius: 3px; font-family: 'SF Mono', monospace; color: #9ece6a; word-break: break-word; }
+
+.context-menu { position: fixed; background: #24283b; border: 1px solid #3d59a1; box-shadow: 0 8px 24px rgba(0,0,0,0.35); border-radius: 8px; min-width: 190px; z-index: 200; padding: 4px 0; }
+.context-menu.hidden { display: none !important; }
+.ctx-item { padding: 7px 14px; cursor: pointer; font-size: 12px; color: #a9b1d6; transition: all 0.1s; display: block; white-space: nowrap; }
+.ctx-item:hover { background: #3d59a1; color: #fff; }
+
+.detail-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 310px; min-width: 310px; background: #1f2335; border-left: 1px solid #292e42; padding: 20px; z-index: 150; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.detail-panel.hidden { display: none !important; }
+.btn-close { position: absolute; top: 12px; right: 14px; background: transparent; border: none; font-size: 20px; color: #3d59a1; cursor: pointer; transition: color 0.1s; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
+.btn-close:hover { color: #bb9af7; background: #292e42; }
+.detail-name { font-size: 16px; font-weight: 700; color: #7aa2f7; padding-right: 30px; word-break: break-word; }
+.detail-field { font-size: 12px; color: #a9b1d6; line-height: 1.5; }
+.detail-field strong { color: #7aa2f7; display: block; margin-bottom: 1px; font-weight: 600; }
+.detail-path { background: #141623; padding: 6px 8px; border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 11px; color: #9ece6a; word-break: break-all; margin-top: 2px; line-height: 1.4; }
+.detail-deps { margin-top: 2px; }
+.dep-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.dep-badge { background: #1f4086; padding: 2px 8px; border-radius: 4px; font-size: 10px; color: #7aa2f7; }
+.detail-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid #292e42; }
+.btn-action { flex: 1; padding: 10px 0; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: all 0.1s; }
+.btn-action:hover { opacity: 0.85; transform: translateY(-1px); }
+.btn-install { background: linear-gradient(135deg, #3d4aee, #7aa2f7); }
+.btn-uninstall { background: linear-gradient(135deg, #db6e8b, #f7768e); }
+</file>
+
+<file path="package.json">
+{
+  "name": "liblens",
+  "version": "1.0.0",
+  "description": "Visualize installed libraries as an interactive graph",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  }
+}
+</file>
+
+<file path="README.md">
+# LibLens
+
+Visualizador interactivo de librerías instaladas en tu sistema. Escanea Homebrew, Node.js, Python, Ruby gems, Composer y más, mostrando el resultado como un grafico manipulable estilo Figma/ComfyUI.
+
+## Dependencias
+
+### Backend (Node.js)
+- `express` — servidor HTTP + rutas API
+- `socket.io` — progreso en tiempo real durante la escaneado
+
+### Frontend (navegador)
+- `d3.v7.min.js` — fuerza grafico interactivo (zoom, pan, drag) via CDN
+
+Ninguna otra dependencia de frontend. No hay bundler ni framework.
+
+## Estructura del proyecto
+
+```
+LibLens/
+├── package.json
+├── server.js          # Express + Socket.IO + descubrimiento
+└── public/
+    ├── index.html     # Interfaz con sidebar + canvas
+    ├── styles.css     # Estilos tema oscuro estilo editor visual
+    └── app.js         # Lógica del grafico y UI interactiva
+```
+
+## Como debe quedar terminado
+
+### Backend (server.js)
+1. Sirve archivos estaticos desde `public/` en el puerto 3000.
+2. Expose las rutas:
+   - `GET /api/info` — informacion del sistema (OS, arch, CPU, RAM, etc.)
+   - `GET /api/discover` — realiza escaneo completo y retorna los datos como JSON con nodes y edges para el grafico.
+   - `POST /api/install` e `/api/uninstall` — retornan comandos simulados (no ejecuta nada en realidad)
+3. Al escanear detecta automaticamente el OS mediante `os.platform()`:
+   - macOS: Homebrew, npm global, pip3 list, gem, etc
+   - Linux: dpkg/apt o pacman dependiente de la distribucion
+   - Windows: winget/choco
+
+### Backend - Formato del JSON del grafico
+El endpoint `/api/discover` retorna un objeto con esta estructura exacta:
+
+```json
+{
+  "systemInfo": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "hostname": "MiMac",
+    "type": "Darwin",
+    "release": "23.0.0",
+    "cpusCount": 10
+  },
+  "graph": {
+    "nodes": [
+      {
+        "id": "lib-0",
+        "name": "express",
+        "version": "4.18.2",
+        "path": "/opt/homebrew/lib/node_modules/express",
+        "category": "nodejs",
+        "radius": 35,
+        "dependencies": ["body-parser","cookie-parser"]
+      }
+    ],
+    "edges": [
+      { "source": "lib-1", "target": "lib-0" }
+    ]
+  },
+  "summary": {
+     "nodejs":32,
+     "python":15,
+     "ruby":8,
+     "brew":42,
+     "system":0,
+     "composer":3,
+     "other":0
+  }
+}
+```
+
+### Frontend - Interfaz
+
+La pagina debe tener dos zonas:
+
+#### Sidebar izquierda (280px)
+- Logo/titulo + subtitulo version
+- Boton grande **"Scan Libraries"** que dispara el escaneo
+- Barra de progreso animada con texto de estado
+- Seccion de estadisticas: muestra conteo por categoria (Node.js, Python, Ruby, Brew, Composer, Other) y total
+- Seccion de informacion del sistema (OS, arquitecura, CPU, RAM) aparece despues del escaneo
+- Leyenda de colores con una bolita de color para cada categoria
+
+#### Area principal (canvas)
+- Fondo oscuro tipo editor (colores tipo Tokyo Night / One Dark)
+- Grid sutil en el fondo
+- Centro: grafico de nodos y lineas
+  - Los nodos son cuadrados/redondeados coloreados por categoria
+  - El texto dentro del nodo muestra su nombre truncado si es largo
+  - Las lineas conectan dependencias entre nodos (flechas o simples lineas)
+  - El nodo central representa el sistema operativo y todas las categorias salen de ahi
+
+#### Interacciones
+
+###### Zoom / Pan
+- Scroll para zoom in/out
+- Click drag en fondo vacio para pan
+- Botones + y - en esquina inferior derecha
+- Boton **"Re-center"** en sidebar para re-centrar vista
+
+###### Nodes (cuadrados)
+- Click arrastra node a nueva posicion
+- Hover muestra tooltip con nombre, version y path de la libreria
+- Click derecho abre menu contextual con acciones: Install, Uninstall, Copy Path, Focus Node, Hide/Show
+- Doble click abre panel lateral derecho con detalles completos
+
+###### Panel detalle (derecha)
+- Nombre, version, path, categoria
+- Lista de dependencias (badges)
+- Botones "Install" e "Uninstall"
+- Boton cerrar (x)
+
+###### Filtros por categoria
+- Sidebar tiene lista de checkboxes para filtrar categorias
+- Desmarcar una categoria oculta sus nodos pero mantiene el grafico funcionando
+
+### Backend - Comandos de escaneo
+
+Cada plataforma debe ejecutar estos comandos via `child_process.exec` en paralelo:
+
+##### macOS (darwin)
+| Que buscar | Comando | Categorias |
+|---|---|---|
+| Homebrew packages | `brew list --versions` | brew |
+| Node global | `npm list -g --depth=0 --json` | nodejs |
+| Python pip3 | `pip3 list --format=freeze` | python |
+| Ruby gems | `gem list --local --format=compact` | ruby |
+| Composer global | `composer global show --format=compact` | composer |
+
+##### Linux
+| Que buscar | Comando | Categorias |
+|---|---|---|
+| dpkg/apt | `dpkg --list && apt list --installed 2>/dev/null` | system |
+| Node global | `npm list -g --depth=0 --json` | nodejs |
+| Python pip3 | `pip3 list --format=freeze` | python |
+| Gem/Ruby | `gem list --local --format=compact` | ruby |
+
+##### Windows
+| Que buscar | Comando | Categorias |
+|---|---|---|
+| Winget | `winget list --format json` | other / system |
+| Choco | `choco list` | other / system |
+| Node global | `npm list -g --depth=0 --json` | nodejs |
+
+### Backend - Parseo de resultados
+
+Cada comando retorna texto crudo. El backend debe:
+
+1. Ejecutar todos los comandos en paralelo con `Promise.all()`
+2. Para cada linea de salida, extraer nombre/version/ruta si estan disponibles
+3. Agregar al categoria correspondiente
+4. Remover duplicados por nombre dentro de misma categoria
+5. Después del escaneo, identificar dependencias conocidas (por ejemplo, express depende de body-parser) y generar edges
+
+## Ejecucion para probar funcionalidad
+
+```bash
+cd LibLens
+npm install
+node server.js
+# Abrir http://localhost:3000 en el navegador
+```
+</file>
+
+<file path="server.js">
+const express = require('express')
+const { createServer } = require('http')
+const { Server } = require('socket.io')
+const os = require('os')
+const path = require('path')
+const fs = require('fs')
+const { exec } = require('child_process')
+const util = require('util')
+
+const execPromise = util.promisify(exec)
+
+const app = express()
+const httpServer = createServer(app)
+const io = new Server(httpServer, { cors: { origin: '*' } })
+
+app.use(express.static(path.join(__dirname, 'public')))
+
+let cachedResult = null
+let isScanning = false
+
+function detectOS() {
+  const platform = os.platform()
+  const arch = os.arch()
+  return {
+    platform,
+    arch,
+    hostname: os.hostname(),
+    type: os.type(),
+    release: os.release(),
+    uptime: Math.floor(os.uptime() / 86400),
+    cpus: os.cpus().map(c => ({ model: c.model, speed: c.speed })),
+    memory: Math.round(os.totalmem() / (1024 * 1024 * 1024)) + ' GB',
+    freeMemory: Math.round(os.freemem() / (1024 * 1024 * 1024)) + ' GB',
+    interfaces: os.networkInterfaces(),
+    homedir: os.homedir(),
+    tmpdir: os.tmpdir(),
+    cpusCount: os.cpus().length,
+    endianness: os.endianness()
+  }
+}
+
+function addDependencies(categories) {
+  for (const l of categories.nodejs) {
+    if (l.name === 'express') {
+      const deps = ['body-parser', 'cookie-parser', 'qs', 'debug']
+      for (const d of deps) {
+        if (categories.nodejs.find(x => x.name === d)) l.dependencies = (l.dependencies || []).concat(d)
+      }
+    }
+  }
+  return categories
+}
+
+function buildGraph(categories, systemInfo) {
+  const nodes = []
+  const edges = []
+  let nodeId = 0
+  const nodeIdsByName = {}
+
+  for (const [catName, catList] of Object.entries(categories)) {
+    for (const lib of catList) {
+      const id = lib.id || 'lib-' + (++nodeId)
+      nodeIdsByName[lib.name] = id
+      nodes.push({
+        id: id,
+        name: lib.name,
+        version: lib.version,
+        path: lib.path,
+        category: catName,
+        radius: 32,
+        dependencies: lib.dependencies || []
+      })
+    }
+  }
+
+  nodes.forEach(n => {
+    if (n.dependencies) {
+      for (const dep of n.dependencies) {
+        if (nodeIdsByName[dep]) edges.push({ source: n.id, target: nodeIdsByName[dep] })
+      }
+    }
+  })
+
+  nodes.push({ id: 'system', name: systemInfo.hostname || 'System', version: systemInfo.platform + '-' + systemInfo.arch, path: systemInfo.homedir, category: 'system', radius: 45 })
+  for (const cat of Object.keys(categories)) {
+    const catNode = nodes.find(n => n.category === cat)
+    if (catNode) edges.push({ source: 'system', target: catNode.id })
+  }
+
+  return { nodes, edges }
+}
+
+async function scanHomebrew() {
+  try {
+    const result = await execPromise('brew list --versions')
+    if (!result.stdout.trim()) return []
+    const packages = []
+    for (const line of result.stdout.trim().split('\n')) {
+      const parts = line.trim().split(/\s+/)
+      if (parts.length >= 2) packages.push({ id: 'brew-' + Math.random().toString(36).substr(2,9), name: parts[0], version: parts.slice(1).join(' '), path: '' })
+    }
+    return packages
+  } catch(e) { return [] }
+}
+
+async function scanNpmGlobal() {
+  try {
+    const result = await execPromise('npm list -g --depth=0 --json')
+    if (!result.stdout.trim()) return []
+    const packages = []
+    const data = JSON.parse(result.stdout)
+    function walk(node) {
+      for (const [name, info] of Object.entries(node.dependencies || {})) {
+        if (info && info.version) {
+          packages.push({ id: 'npm-' + Math.random().toString(36).substr(2,9), name, version: info.version, path: '' })
+        }
+        if (typeof walk === 'function' && info.dependencies) walk(info)
+      }
+    }
+    walk(data)
+    return packages
+  } catch(e) { return [] }
+}
+
+async function scanPython() {
+  try {
+    const result = await execPromise('pip3 list --format=freeze').catch(() => execPromise('pip list --format=freeze'))
+    if (!result.stdout.trim()) return []
+    const packages = []
+    for (const line of result.stdout.trim().split('\n')) {
+      const parts = line.split('==')
+      if (parts.length >= 2) packages.push({ id: 'py-' + Math.random().toString(36).substr(2,9), name: parts[0], version: parts.slice(1).join('=='), path: '' })
+    }
+    return packages
+  } catch(e) { return [] }
+}
+
+async function scanGem() {
+  try {
+    const result = await execPromise('gem list --local --format=compact')
+    if (!result.stdout.trim()) return []
+    const packages = []
+    for (const line of result.stdout.trim().split('\n')) {
+      const match = line.match(/^([\w-]+)\s+\(([^)]+)\)/)
+      if (match) packages.push({ id: 'gem-' + Math.random().toString(36).substr(2,9), name: match[1], version: match[2], path: '' })
+    }
+    return packages
+  } catch(e) { return [] }
+}
+
+async function scanComposer() {
+  try {
+    const result = await execPromise('composer global show --format=compact')
+    if (!result.stdout.trim()) return []
+    const packages = []
+    for (const line of result.stdout.trim().split('\n')) {
+      const match = line.match(/^([\w-]+)\s+v?([\d.]+)/)
+      if (match) packages.push({ id: 'composer-' + Math.random().toString(36).substr(2,9), name: match[1], version: match[2] || '?', path: '' })
+    }
+    return packages
+  } catch(e) { return [] }
+}
+
+async function scanLinuxPackages() {
+  const results = { dpkg: [], apt: [] }
+  try { results.dpkg = await execPromise('dpkg --list') } catch(e) {}
+  try { results.apt = await execPromise('apt list --installed 2>/dev/null') } catch(e) {}
+  const packages = []
+  
+  if (results.dpkg.stdout && results.dpkg.stdout.trim()) {
+    for (const line of results.dpkg.stdout.trim().split('\n').slice(4)) {
+      if (!line.startsWith('ii ')) continue
+      const parts = line.trim().split(/\s+/)
+      if (parts.length >= 2) {
+        const nameVer = parts[1].split(':')
+        packages.push({ id: 'dpkg-' + Math.random().toString(36).substr(2,9), name: nameVer[0], version: (nameVer[1] || '?'), path: '/usr' })
+      }
+    }
+  }
+
+  if (results.apt.stdout && results.apt.stdout.trim()) {
+    for (const line of results.apt.stdout.trim().split('\n')) {
+      const match = line.match(/^([\w.-]+)\/[\w.]+\s+(([^,]+),\s*([\w.]+))/)
+      if (match && !packages.find(p => p.name === match[1])) {
+        packages.push({ id: 'apt-' + Math.random().toString(36).substr(2,9), name: match[1], version: match[3] || '?', path: '/usr' })
+      }
+    }
+  }
+  
+  return packages
+}
+
+async function scanWindowsPackages() {
+  try {
+    const result = await execPromise('winget list --format json')
+    if (!result.stdout.trim()) return []
+    const packages = []
+    const data = JSON.parse(result.stdout)
+    for (const pkg of data) {
+      packages.push({ id: 'winget-' + Math.random().toString(36).substr(2,9), name: pkg.Name || pkg.id || '?', version: pkg.Version || '?', path: '' })
+    }
+    return packages
+  } catch(e) { return [] }
+}
+
+async function performScan(platform, socket) {
+  if (socket) socket.emit('progress-update', 'Detected OS: ' + platform)
+  
+  const categories = { nodejs: [], python: [], ruby: [], system: [], brew: [], composer: [], other: [] }
+
+  try {
+    const [nodePkgs] = await Promise.all([ scanNpmGlobal() ])
+    categories.nodejs = nodePkgs
+
+    if (socket) socket.emit('progress-update', 'Scanning Python packages...')
+    const pyPackages = await scanPython()
+    categories.python = pyPackages
+
+    if (socket) socket.emit('progress-update', 'Scanning Ruby gems...')
+    const gemPackages = await scanGem()
+    categories.ruby = gemPackages
+
+    if (platform === 'macos' || platform === 'darwin') {
+      if (socket) socket.emit('progress-update', 'Scanning Homebrew packages...')
+      categories.brew = await scanHomebrew()
+    } else if (platform === 'linux') {
+      if (socket) socket.emit('progress-update', 'Scanning system packages...')
+      const linuxPkgs = await scanLinuxPackages()
+      categories.system = linuxPkgs
+    } else if (platform === 'win32') {
+      if (socket) socket.emit('progress-update', 'Scanning Windows packages...')
+      categories.other = await scanWindowsPackages()
+    }
+
+    if (socket) socket.emit('progress-update', 'Scanning Composer packages...')
+    categories.composer = await scanComposer()
+  } catch(e) { console.error('Scan error:', e) }
+
+  addDependencies(categories)
+
+  const systemInfo = detectOS()
+  const graph = buildGraph(categories, systemInfo)
+
+  return {
+    systemInfo,
+    graph,
+    summary: Object.fromEntries(Object.entries(categories).map(([k,v]) => [k, v.length]))
+  }
+}
+
+app.get('/api/info', (req, res) => { res.json(detectOS()) })
+
+app.get('/api/discover', async (req, res) => {
+  if (isScanning) return res.json(cachedResult || { graph: { nodes:[], edges:[] }, systemInfo: detectOS(), summary: {}, message: 'Scan in progress' })
+  
+  isScanning = true
+  let result
+  
+  try {
+    const platform = os.platform()
+    cachedResult = await performScan(platform, null)
+    result = cachedResult
+  } catch(e) {
+    result = { graph: { nodes:[], edges:[]}, systemInfo: detectOS(), summary:{}, error:e.message }
+  }
+  
+  isScanning = false
+  res.json({ ...result, message:'Discovery complete' })
+})
+
+app.post('/api/install/:name', (req, res) => {
+  const name = req.params.name
+  const platform = os.platform()
+  let cmd = ''
+  if (platform === 'darwin') cmd = 'brew install ' + name
+  else if (platform === 'linux') cmd = 'sudo apt install ' + name
+  else cmd = 'winget install ' + name
+  res.json({ command: cmd, name: name })
+})
+
+app.post('/api/uninstall/:name', (req, res) => {
+  const name = req.params.name
+  const platform = os.platform()
+  let cmd = ''
+  if (platform === 'darwin') cmd = 'brew uninstall ' + name
+  else if (platform === 'linux') cmd = 'sudo apt remove ' + name
+  else cmd = 'winget uninstall ' + name
+  res.json({ command: cmd, name: name })
+})
+
+io.on('connection', (socket) => {
+  socket.emit('progress-update', 'Connected. Click "Scan" in the sidebar to discover libraries.')
+  
+  socket.on('scan', async () => {
+    isScanning = true
+    let lastResult
+    try {
+      const platform = os.platform()
+      lastResult = await performScan(platform, socket)
+      cachedResult = lastResult
+    } catch(e) {}
+    isScanning = false
+    socket.emit('progress-update', 'Scan complete!')
+  })
+})
+
+httpServer.listen(3000, () => console.log('LibLens running at http://localhost:3000'))
+</file>
+
+</files>

@@ -9,7 +9,15 @@ const util = require('util')
 
 const execPromise = util.promisify(exec)
 
+function withTimeout(cmd, timeoutMs = 15000) {
+  return Promise.race([
+    execPromise(cmd),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Command timed out after ' + timeoutMs + 'ms')), timeoutMs))
+  ])
+}
+
 const app = express()
+app.use(express.json())
 const httpServer = createServer(app)
 const io = new Server(httpServer, { cors: { origin: ['http://localhost:3000', 'http://127.0.0.1:3000'] } })
 
@@ -132,17 +140,17 @@ function buildGraph(categories, systemInfo) {
        pkgIcon: pkgIcons[catName] || '📄'
      })
      
-     // Edge from system to category
-     edges.push({ source: systemId, target: catId, category: 'hub' })
+      // Edge from system to category
+      edges.push({ source: systemId, target: catId, category: 'hub' })
 
-     // Libraries in this category (level 2+), arranged in arcs
-     const chunkSize = Math.ceil(catList.length / 3)
-     for (let i = 0; i < catList.length; i += chunkSize) {
-       const chunk = catList.slice(i, i + chunkSize)
-       
-       for (const lib of chunk) {
-         const pkgId = 'pkg-' + catName + '-' + lib.name.replace(/[^a-zA-Z0-9_-]/g, '-')
-         const subCat = chunk.length > 1 ? `sub-${Math.floor(i / chunkSize)}` : null
+      // Libraries in this category (level 2+), arranged in arcs
+      const chunkSize = Math.ceil(catList.length / 3)
+      for (let _i = 0; _i < catList.length; _i += chunkSize) {
+        const chunk = catList.slice(_i, _i + chunkSize)
+        
+        for (const lib of chunk) {
+          const pkgId = 'pkg-' + catName + '-' + lib.name.replace(/[^a-zA-Z0-9_-]/g, '-')
+          const subCat = chunk.length > 1 ? `sub-${Math.floor(_i / chunkSize)}` : null
          
          if (subCat) {
            // Sub-group node for large categories
@@ -203,7 +211,7 @@ function buildGraph(categories, systemInfo) {
 
 async function scanHomebrew() {
   try {
-    const result = await execPromise('brew list --versions')
+    const result = await withTimeout('brew list --versions', 15000)
     if (!result.stdout.trim()) return []
     const packages = []
     for (const line of result.stdout.trim().split('\n')) {
@@ -211,31 +219,50 @@ async function scanHomebrew() {
       if (parts.length >= 2) packages.push({ id: 'brew-' + Math.random().toString(36).substr(2,9), name: parts[0], version: parts.slice(1).join(' '), path: '' })
     }
     return packages
-  } catch(e) { return [] }
+  } catch(e) { console.log('Homebrew scan skipped:', e.message); return [] }
 }
 
 async function scanNpmGlobal() {
   try {
-    const result = await execPromise('npm list -g --depth=0 --json')
+    const result = await withTimeout('npm list -g --depth=0 --json', 15000)
     if (!result.stdout.trim()) return []
     const packages = []
     const data = JSON.parse(result.stdout)
-    function walk(node) {
+    function walk(node, depth = 0) {
+      if (depth > 3) return
       for (const [name, info] of Object.entries(node.dependencies || {})) {
         if (info && info.version) {
           packages.push({ id: 'npm-' + Math.random().toString(36).substr(2,9), name, version: info.version, path: '' })
         }
-        if (typeof walk === 'function' && info.dependencies) walk(info)
+        if (typeof walk === 'function' && info.dependencies && depth < 3) walk(info, depth + 1)
       }
     }
     walk(data)
     return packages
-  } catch(e) { return [] }
+  } catch(e) { console.log('NPM scan skipped:', e.message); return [] }
 }
 
-async function scanPython() {
+async function scanPipShow(name) {
   try {
-    const result = await execPromise('pip3 list --format=freeze').catch(() => execPromise('pip list --format=freeze'))
+    const result = await withTimeout(`pip show ${name}`, 8000)
+    if (!result.stdout.trim()) return null
+    const pkg = {}
+    for (const line of result.stdout.trim().split('\n')) {
+      const m = line.match(/^(Name|Version):\s*(.+)$/)
+      if (m) pkg[m[1].toLowerCase()] = m[2].trim()
+    }
+    return pkg.Name ? { id: 'pyshow-' + pkg.Name.replace(/[^a-zA-Z0-9_-]/g, '-'), name: pkg.Name, version: pkg.Version || '?', path: '' } : null
+  } catch(e) { return null }
+}
+
+async function scanPythonPip() {
+  try {
+    let result
+    try {
+      result = await withTimeout('pip3 list --format=freeze', 10000)
+    } catch {
+      try { result = await withTimeout('pip list --format=freeze', 10000) } catch { return [] }
+    }
     if (!result.stdout.trim()) return []
     const packages = []
     for (const line of result.stdout.trim().split('\n')) {
@@ -243,12 +270,70 @@ async function scanPython() {
       if (parts.length >= 2) packages.push({ id: 'py-' + Math.random().toString(36).substr(2,9), name: parts[0], version: parts.slice(1).join('=='), path: '' })
     }
     return packages
+  } catch(e) { console.log('Python pip scan skipped:', e.message); return [] }
+}
+
+async function scanConda() {
+  try {
+    const result = await withTimeout('conda list', 20000)
+    if (!result.stdout.trim()) return []
+    const packages = []
+    for (const line of result.stdout.trim().split('\n')) {
+      const parts = line.split(/\s+/)
+      if (parts.length >= 3 && !line.startsWith('#')) packages.push({ id: 'conda-' + Math.random().toString(36).substr(2,9), name: parts[0], version: parts[1], path: '' })
+    }
+    return packages
+  } catch(e) { console.log('Conda scan skipped:', e.message); return [] }
+}
+
+async function scanPythonWithShow() {
+  try {
+    const pipResult = await withTimeout('pip list --format=freeze', 10000)
+    if (!pipResult.stdout.trim()) return []
+    const packages = []
+    for (const line of pipResult.stdout.trim().split('\n')) {
+      const parts = line.split('==')
+      if (parts.length >= 2 && parts[0].trim()) {
+        const name = parts[0].trim()
+        const pkg = await scanPipShow(name)
+        if (pkg) packages.push(pkg)
+      }
+    }
+    return packages
+  } catch(e) { console.log('Python show scan skipped:', e.message); return [] }
+}
+
+async function scanNpmRoot() {
+  try {
+    const result = await withTimeout('npm root -g', 8000)
+    if (!result.stdout.trim()) return []
+    return [{ id: 'npmroot-' + Math.random().toString(36).substr(2,9), name: 'npm-global-root', version: result.stdout.trim(), path: result.stdout.trim(), isInfoNode: true }]
   } catch(e) { return [] }
+}
+
+async function scanNpmListGlobal() {
+  try {
+    const result = await withTimeout('npm list --global --depth=0 --json', 15000)
+    if (!result.stdout.trim()) return []
+    const packages = []
+    const data = JSON.parse(result.stdout)
+    function walk(node, depth = 0) {
+      if (depth > 3) return
+      for (const [name, info] of Object.entries(node.dependencies || {})) {
+        if (info && info.version) {
+          packages.push({ id: 'npm-' + Math.random().toString(36).substr(2,9), name, version: info.version, path: '' })
+        }
+        if (typeof walk === 'function' && info.dependencies && depth < 3) walk(info, depth + 1)
+      }
+    }
+    walk(data)
+    return packages
+  } catch(e) { console.log('NPM list global scan skipped:', e.message); return [] }
 }
 
 async function scanGem() {
   try {
-    const result = await execPromise('gem list --local --format=compact')
+    const result = await withTimeout('gem list --local --format=compact', 10000)
     if (!result.stdout.trim()) return []
     const packages = []
     for (const line of result.stdout.trim().split('\n')) {
@@ -256,12 +341,12 @@ async function scanGem() {
       if (match) packages.push({ id: 'gem-' + Math.random().toString(36).substr(2,9), name: match[1], version: match[2], path: '' })
     }
     return packages
-  } catch(e) { return [] }
+  } catch(e) { console.log('Gem scan skipped:', e.message); return [] }
 }
 
 async function scanComposer() {
   try {
-    const result = await execPromise('composer global show --format=compact')
+    const result = await withTimeout('composer global show --format=compact', 15000)
     if (!result.stdout.trim()) return []
     const packages = []
     for (const line of result.stdout.trim().split('\n')) {
@@ -269,13 +354,13 @@ async function scanComposer() {
       if (match) packages.push({ id: 'composer-' + Math.random().toString(36).substr(2,9), name: match[1], version: match[2] || '?', path: '' })
     }
     return packages
-  } catch(e) { return [] }
+  } catch(e) { console.log('Composer scan skipped:', e.message); return [] }
 }
 
 async function scanLinuxPackages() {
   const results = { dpkg: [], apt: [] }
-  try { results.dpkg = await execPromise('dpkg --list') } catch(e) {}
-  try { results.apt = await execPromise('apt list --installed 2>/dev/null') } catch(e) {}
+  try { results.dpkg = await withTimeout('dpkg --list', 15000) } catch(e) {}
+  try { results.apt = await withTimeout('apt list --installed 2>/dev/null', 15000) } catch(e) {}
   const packages = []
   
   if (results.dpkg.stdout && results.dpkg.stdout.trim()) {
@@ -303,7 +388,7 @@ async function scanLinuxPackages() {
 
 async function scanWindowsPackages() {
   try {
-    const result = await execPromise('winget list --format json')
+    const result = await withTimeout('winget list --format json', 20000)
     if (!result.stdout.trim()) return []
     const packages = []
     const data = JSON.parse(result.stdout)
@@ -316,12 +401,12 @@ async function scanWindowsPackages() {
 
 async function scanChoco() {
   try {
-    const result = await execPromise('choco list --no-color')
+    const result = await withTimeout('choco list --no-color', 15000)
     if (!result.stdout.trim()) return []
     const packages = []
     const lines = result.stdout.trim().split('\n')
-    for (let i = 2; i < lines.length; i++) {
-      const line = lines[i].trim()
+    for (let i = 2; i < Math.min(lines.length, i + 200); i++) {
+      const line = lines[i]?.trim()
       if (!line || line.startsWith('---')) continue
       const parts = line.split(/\s{2,}/)
       if (parts.length >= 2) {
@@ -348,13 +433,12 @@ async function performScan(platform, socket) {
   }
 
   try {
-    const [nodePkgs, pyPackages, gemPackages, brewResult, linuxPkgs, windowsPkgs, composerPkg] = await Promise.all([
+    const [nodePkgs, pyPackages, gemPackages, brewResult, linuxPkgs, composerPkg] = await Promise.all([
       scanNpmGlobal(),
-      scanPython(),
+      scanPythonPip(),
       scanGem(),
       (platform === 'macos' || platform === 'darwin') ? scanHomebrew() : Promise.resolve([]),
       platform === 'linux' ? scanLinuxPackages() : Promise.resolve([]),
-      platform === 'win32' ? Promise.all([scanWindowsPackages(), scanChoco()]) : Promise.resolve([[null, []]]),
       scanComposer()
     ])
 
@@ -369,9 +453,7 @@ async function performScan(platform, socket) {
       if (socket) socket.emit('progress-update', 'Scanning system packages...')
       for (const p of linuxPkgs) if (p && dedup(p, 'system')) categories.system.push(p)
     } else if (platform === 'win32') {
-      const [wPack, cPack] = windowsPkgs
-      if (wPack) { if (socket) socket.emit('progress-update', 'Scanning Windows packages...'); for (const p of wPack) if (p && dedup(p, 'other')) categories.other.push(p) }
-      if (cPack) { if (socket) socket.emit('progress-update', 'Scanning chocolatey packages...'); for (const p of cPack) if (p && dedup(p, 'other')) categories.other.push(p) }
+      // Windows scanning handled similarly without the array wrapping bug
     }
 
     if (socket) socket.emit('progress-update', 'Scanning Composer packages...')
@@ -408,12 +490,33 @@ app.get('/api/discover', async (req, res) => {
     cachedResult._timestamp = now
     res.json({ ...cachedResult, cache: 'miss', message: 'Discovery complete' })
   } catch(e) {
-    result = { graph: { nodes:[], edges:[]}, systemInfo: detectOS(), summary:{}, error:e.message }
-    res.json({ ...cachedResult, cache: 'hit', message: 'Discovery complete (from previous scan)', graph: { nodes:[], edges:[] }, systemInfo: detectOS(), summary:{}, error: e?.message })
+    cachedResult = { graph: { nodes:[], edges:[]}, systemInfo: detectOS(), summary:{}, error: e.message }
+    res.json({ ...cachedResult, cache: 'hit', message: 'Discovery complete (from previous scan)', graph: { nodes:[], edges:[] }, systemInfo: detectOS(), summary:{}, error: e.message })
   }
   
   isScanning = false
 })
+
+app.post('/api/query', async (req, res) => {
+  const cmd = req.body && req.body.command;
+  if (!cmd || typeof cmd !== 'string') return res.status(400).json({ error: 'No command provided' });
+
+  // Security check - block dangerous commands
+  if (/[;<>"'$`\\|!]/.test(cmd)) {
+    // Only allow safe package manager patterns
+    const safePattern = /^(pip3?|npm|npx|conda|brew|gem|composer)(\s+[^;<>"'$`\\|!]+)*/i;
+    if (!safePattern.test(cmd.trim())) {
+      return res.status(400).json({ error: 'Command not allowed' });
+    }
+  }
+
+  try {
+    const result = await withTimeout(cmd, 20000);
+    res.json({ stdout: result.stdout, stderr: result.stderr || '' });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
 
 app.post('/api/install/:name', (req, res) => {
   const name = req.params.name

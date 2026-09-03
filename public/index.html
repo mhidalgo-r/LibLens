@@ -5,17 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LibLens - Library Visualization</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://d3js.org/d3.v7.min.js" onerror="console.error('Failed to load D3.js')"></script>
 </head>
 <body>
   <!-- Sidebar -->
-  <div class="sidebar">
+  <button class="sidebar-toggle-btn" id="sidebar-toggle" aria-label="Toggle sidebar menu">&#9776;</button>
+  <div class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation sidebar">
     <div class="sidebar-header">
       <h1>LibLens</h1>
-      <span class="version">v1.0 &mdash; Library Visualizer</span>
+      <span class="version">v1.0 — Library Visualizer</span>
     </div>
 
-    <button id="btn-scan" class="btn-primary">Scan Libraries</button>
+    <button id="btn-scan" class="btn-primary" aria-label="Scan system for installed libraries">Scan Libraries</button>
 
     <div class="section">
       <div class="section-title">Progress</div>
@@ -53,12 +54,12 @@
       <input type="text" class="search-box" id="search-input" placeholder="Filter libraries...">
     </div>
 
-    <button id="btn-recenter" class="btn-secondary">Re-center View</button>
+    <button id="btn-recenter" class="btn-secondary" aria-label="Re-center the graph view">Re-center View</button>
   </div>
 
   <!-- Canvas -->
-  <div class="canvas-container" id="canvas-container">
-    <svg id="graph-svg"></svg>
+  <div class="canvas-container" id="canvas-container" role="main" aria-label="Interactive graph canvas">
+    <svg id="graph-svg" role="img" aria-label="Library dependency graph visualization"></svg>
 
     <div class="tooltip hidden" id="tooltip"></div>
     <div class="context-menu hidden" id="context-menu"></div>
@@ -71,17 +72,17 @@
       <p class="detail-field" id="detail-category"></p>
       <div id="detail-deps-text"></div>
       <div class="detail-actions">
-        <button id="btn-install" class="btn-action btn-install">Install</button>
-        <button id="btn-uninstall" class="btn-action btn-uninstall">Uninstall</button>
+      <button id="btn-install" class="btn-action btn-install" aria-label="Install this library">Install</button>
+      <button id="btn-uninstall" class="btn-action btn-uninstall" aria-label="Uninstall this library">Uninstall</button>
       </div>
     </div>
 
-    <div class="toolbar">
-      <button class="btn-toolbar" id="zoom-in" title="Zoom in">+</button>
-      <button class="btn-toolbar" id="zoom-out" title="Zoom out">&minus;</button>
+    <div class="toolbar" role="toolbar" aria-label="Canvas zoom controls">
+      <button class="btn-toolbar" id="zoom-in" aria-label="Zoom in canvas (+)">+</button>
+      <button class="btn-toolbar" id="zoom-out" aria-label="Zoom out canvas (-)">&minus;</button>
     </div>
 
-    <div class="zoom-info" id="zoom-info">100%</div>
+    <div class="zoom-info" id="zoom-info" aria-live="polite" title="Zoom: 10% - 500%">10%</div>
   </div>
 
   <script src="app.js"></script>

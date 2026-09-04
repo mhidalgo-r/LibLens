@@ -2,7 +2,8 @@ const state = {
   allPackages: [],
   selectedPackage: null,
   activeFilter: 'all',
-  searchQuery: ''
+  searchQuery: '',
+  contextMenuItems: []
 };
 
 const dom = {};
@@ -23,7 +24,94 @@ function init() {
   dom.detailName = document.getElementById('detail-name');
   dom.detailContent = document.getElementById('detail-content');
 
+  // Context menu
+  dom.contextMenu = document.createElement('div');
+  dom.contextMenu.id = 'context-menu';
+  dom.contextMenu.style.cssText = `
+    position:fixed;z-index:9000;background:#1e1f42;border:1px solid #2a2d5a;
+    border-radius:8px;padding:4px;min-width:200px;display:none;
+    box-shadow:0 8px 32px rgba(0,0,0,0.6);backdrop-filter:blur(8px);
+  `;
+
+  document.body.appendChild(dom.contextMenu);
+
   bindEvents();
+}
+
+function showContextMenu(x, y, items) {
+  let html = '';
+
+  for (const item of items) {
+    const cls = item.destructive ? 'ctx-item ctx-destructive' : 'ctx-item';
+    html += `<div class="${cls}" data-cmd="${item.cmd}" data-destructive="${item.destructive || false}">${item.label}</div>`;
+  }
+
+  dom.contextMenu.innerHTML = html;
+
+  // Clamp position
+  if (x + 220 > window.innerWidth) x = window.innerWidth - 220;
+  if (y + items.length * 40 > window.innerHeight) y = window.innerHeight - items.length * 40;
+  dom.contextMenu.style.left = x + 'px';
+  dom.contextMenu.style.top = y + 'px';
+  dom.contextMenu.style.display = 'block';
+
+  // Bind clicks
+  dom.contextMenu.querySelectorAll('.ctx-item').forEach(el => {
+    el.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      hideContextMenu();
+      runAction(this.dataset.cmd, this.dataset.destructive === 'true');
+    });
+  });
+}
+
+function hideContextMenu() {
+  dom.contextMenu.style.display = 'none';
+}
+
+document.addEventListener('contextmenu', (ev) => {
+  // If not on a package item, allow default
+  const pkgItem = ev.target.closest('.package-item');
+  if (!pkgItem) return;
+
+  ev.preventDefault();
+  ev.stopPropagation();
+
+  const name = pkgItem.dataset.name;
+  const pkg = state.allPackages.find(p => p.name === name);
+  if (!pkg) return;
+
+  fetch('/api/get-actions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: pkg.name, category: pkg.category })
+  }).then(r => r.json()).then(data => {
+    if (data.actions.length) showContextMenu(ev.clientX, ev.clientY, data.actions);
+  });
+});
+
+document.addEventListener('click', hideContextMenu);
+
+function runAction(cmd, isDestructive) {
+  if (isDestructive) {
+    const name = cmd.split(/uninstall\s+/).pop() || 'unknown';
+    if (!confirm(`Are you sure you want to uninstall "${name}"? This cannot be undone.`)) return;
+  }
+
+  fetch('/api/execute-command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: cmd, isDestructive: isDestructive === 'true', destructive: isDestructive })
+  }).then(r => r.json()).then(data => {
+    if (data.error) {
+      dom.outputArea.innerHTML = `<div class="output-output error">${escapeHtml(data.error)}</div>`;
+    } else {
+      const output = data.stdout || '(no output)';
+      dom.outputArea.innerHTML = `<div class="output-output" style="margin-bottom:8px;">${escapeHtml('$ ' + cmd)}</div><div class="output-output">${escapeHtml(output)}</div>`;
+    }
+  }).catch(err => {
+    dom.outputArea.innerHTML = `<div class="output-output error">${escapeHtml(err.message)}</div>`;
+  });
 }
 
 function bindEvents() {

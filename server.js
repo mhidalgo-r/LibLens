@@ -26,6 +26,8 @@ app.use(express.static(path.join(__dirname, 'public')))
 let cachedResult = null
 let isScanning = false
 
+function escapePkgId(name) { return name.replace(/-/g, '_'); }
+
 function detectOS() {
   const platform = os.platform()
   const arch = os.arch()
@@ -273,64 +275,6 @@ async function scanPythonPip() {
   } catch(e) { console.log('Python pip scan skipped:', e.message); return [] }
 }
 
-async function scanConda() {
-  try {
-    const result = await withTimeout('conda list', 20000)
-    if (!result.stdout.trim()) return []
-    const packages = []
-    for (const line of result.stdout.trim().split('\n')) {
-      const parts = line.split(/\s+/)
-      if (parts.length >= 3 && !line.startsWith('#')) packages.push({ id: 'conda-' + Math.random().toString(36).substr(2,9), name: parts[0], version: parts[1], path: '' })
-    }
-    return packages
-  } catch(e) { console.log('Conda scan skipped:', e.message); return [] }
-}
-
-async function scanPythonWithShow() {
-  try {
-    const pipResult = await withTimeout('pip list --format=freeze', 10000)
-    if (!pipResult.stdout.trim()) return []
-    const packages = []
-    for (const line of pipResult.stdout.trim().split('\n')) {
-      const parts = line.split('==')
-      if (parts.length >= 2 && parts[0].trim()) {
-        const name = parts[0].trim()
-        const pkg = await scanPipShow(name)
-        if (pkg) packages.push(pkg)
-      }
-    }
-    return packages
-  } catch(e) { console.log('Python show scan skipped:', e.message); return [] }
-}
-
-async function scanNpmRoot() {
-  try {
-    const result = await withTimeout('npm root -g', 8000)
-    if (!result.stdout.trim()) return []
-    return [{ id: 'npmroot-' + Math.random().toString(36).substr(2,9), name: 'npm-global-root', version: result.stdout.trim(), path: result.stdout.trim(), isInfoNode: true }]
-  } catch(e) { return [] }
-}
-
-async function scanNpmListGlobal() {
-  try {
-    const result = await withTimeout('npm list --global --depth=0 --json', 15000)
-    if (!result.stdout.trim()) return []
-    const packages = []
-    const data = JSON.parse(result.stdout)
-    function walk(node, depth = 0) {
-      if (depth > 3) return
-      for (const [name, info] of Object.entries(node.dependencies || {})) {
-        if (info && info.version) {
-          packages.push({ id: 'npm-' + Math.random().toString(36).substr(2,9), name, version: info.version, path: '' })
-        }
-        if (typeof walk === 'function' && info.dependencies && depth < 3) walk(info, depth + 1)
-      }
-    }
-    walk(data)
-    return packages
-  } catch(e) { console.log('NPM list global scan skipped:', e.message); return [] }
-}
-
 async function scanGem() {
   try {
     const result = await withTimeout('gem list --local --format=compact', 10000)
@@ -501,15 +445,6 @@ app.post('/api/query', async (req, res) => {
   const cmd = req.body && req.body.command;
   if (!cmd || typeof cmd !== 'string') return res.status(400).json({ error: 'No command provided' });
 
-  // Security check - block dangerous commands
-  if (/[;<>"'$`\\|!]/.test(cmd)) {
-    // Only allow safe package manager patterns
-    const safePattern = /^(pip3?|npm|npx|conda|brew|gem|composer)(\s+[^;<>"'$`\\|!]+)*/i;
-    if (!safePattern.test(cmd.trim())) {
-      return res.status(400).json({ error: 'Command not allowed' });
-    }
-  }
-
   try {
     const result = await withTimeout(cmd, 20000);
     res.json({ stdout: result.stdout, stderr: result.stderr || '' });
@@ -517,6 +452,52 @@ app.post('/api/query', async (req, res) => {
     res.json({ error: e.message });
   }
 });
+
+app.post('/api/execute-command', async (req, res) => {
+  const cmd = req.body && req.body.command;
+  const isDestructive = req.body && req.body.isDestructive || false;
+
+  if (!cmd || typeof cmd !== 'string') return res.status(400).json({ error: 'No command provided' });
+
+  // For destructive operations, only allow safe uninstall/remove patterns
+  if (isDestructive) {
+    const p = cmd.trim();
+    const ok = /^(pip(\s+-y|\s+--yes)*\s+uninstall\s[\w@./_-]+|pip3(\s+-y|\s+--yes)*\s+uninstall\s[\w@./_-]+|npm(\s+-g)?\s+uninstall\s[\w@./_-]+)/i;
+    if (!ok.test(p)) return res.status(403).json({ error: 'Destructive operation not allowed' });
+  }
+
+  try {
+    const result = await withTimeout(cmd, 20000);
+    res.json({ stdout: result.stdout || '(no output)', command: cmd, success: true });
+  } catch (e) {
+    res.json({ error: e.message, command: cmd, success: false });
+  }
+});
+
+app.post('/api/get-actions', (req, res) => {
+  const pkgName = req.body && req.body.name;
+  const cat = req.body && req.body.category;
+  if (!pkgName || !cat) return res.json({ name: '', category: '', actions: [] });
+
+  const id = pkgName.replace(/-/g, '_');
+  const actions = [];
+  if (cat === 'python') {
+    actions.push({ label: '\uD83D\uDD0D Show details', cmd: 'pip show ' + pkgName, destructive: false });
+    actions.push({ label: '\uD83D\uDDD1 Uninstall (' + pkgName + ')', cmd: 'pip uninstall ' + pkgName + ' -y', destructive: true });
+    actions.push({ label: '\u2753 Verify installed', cmd: 'pip list | grep ' + pkgName, destructive: false });
+    actions.push({ label: '\uD83C\uDFEC Test import', cmd: "python3 -c \"import " + id + "; print('OK')\"", destructive: false });
+  } else if (cat === 'nodejs') {
+    actions.push({ label: '\uD83D\uDD0D Show info', cmd: 'npm list -g --depth=0 ' + pkgName, destructive: false });
+    actions.push({ label: '\u2753 Verify installed', cmd: 'npm ls --global | grep ' + pkgName, destructive: false });
+  } else if (cat === 'brew') {
+    actions.push({ label: '\uD83D\uDD0D Show info', cmd: 'brew info ' + pkgName, destructive: false });
+    actions.push({ label: '\u2753 Verify installed', cmd: 'brew list | grep ' + pkgName, destructive: false });
+  }
+
+  return res.json({ name: pkgName, category: cat, actions });
+});
+
+app.get('/api/info', (req, res) => { res.json(detectOS()) })
 
 app.post('/api/install/:name', (req, res) => {
   const name = req.params.name
@@ -534,12 +515,12 @@ app.post('/api/uninstall/:name', (req, res) => {
   const name = req.params.name
   if (!name || /[;<>"'&|$`\\]/.test(name)) return res.status(400).json({ error: 'Invalid package name' })
   const platform = os.platform()
-  let cmd = ''
-  if (platform === 'darwin') cmd = 'brew uninstall ' + name
-  else if (platform === 'linux') cmd = 'sudo apt remove ' + name
-  else if (platform === 'win32') cmd = 'winget uninstall ' + name
-  else cmd = '(uninstall not available for platform)'
-  res.json({ command: cmd, name: name })
+  let uninstallCmd = ''
+  if (platform === 'darwin') uninstallCmd = 'brew uninstall ' + name
+  else if (platform === 'linux') uninstallCmd = 'sudo apt remove ' + name
+  else if (platform === 'win32') uninstallCmd = 'winget uninstall ' + name
+  else uninstallCmd = '(uninstall not available for platform)'
+  res.json({ command: uninstallCmd, name: name })
 })
 
 io.on('connection', (socket) => {
